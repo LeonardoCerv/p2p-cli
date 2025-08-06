@@ -1,16 +1,12 @@
 [package]
 name = "p2p-cli"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0.98"
-clap = { version = "4.5.42", features = ["derive"] }
-data-encoding = "2.9.0"
-futures-lite = "2.6.1"
-iroh = "0.91.1"
-iroh-gossip = "0.91.0"
-rand = "0.8"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.142"
-tokio = "1.47.1"
+nokhwa = { version = "0.10", features = ["input-v4l", "input-msmf", "input-avfoundation"] }
+image = "0.24"
+terminal_size = "0.3"
+viuer = "0.9.2"
+termimage = "1.2.2"
