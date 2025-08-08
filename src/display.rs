@@ -54,7 +54,7 @@ impl TerminalDisplay {
         }
     }
 
-    pub fn show_frame(&mut self, pixels: &[(u8, u8, u8)]) -> Result<()> {
+    pub fn show_frame(&mut self, frame_bytes: &[u8]) -> Result<()> {
         let (new_w, new_h) = term_size();
         if new_w != self.term_w || new_h != self.term_h {
             self.term_w = new_w;
@@ -63,7 +63,7 @@ impl TerminalDisplay {
             self.redraw = true;
         }
         
-        self.render_blocks(pixels)
+        self.render_blocks(frame_bytes)
     }
     
     fn calc_layout(&mut self) {
@@ -81,7 +81,7 @@ impl TerminalDisplay {
         self.v_pad = (self.term_h.saturating_sub(self.disp_h).saturating_sub(2)) / 2;
     }
 
-    fn render_blocks(&mut self, pixels: &[(u8, u8, u8)]) -> Result<()> {
+    fn render_blocks(&mut self, frame_bytes: &[u8]) -> Result<()> {
         self.buf.clear();
         
         if self.redraw {
@@ -108,12 +108,17 @@ impl TerminalDisplay {
                 let src_y_top = ((y as u32 * self.scale * 2) as usize).min(self.cam_h as usize - 1);
                 let src_y_bot = (((y as u32 * self.scale * 2) + self.scale) as usize).min(self.cam_h as usize - 1);
                 
-                let top_idx = src_y_top * self.cam_w as usize + src_x;
-                let bot_idx = src_y_bot * self.cam_w as usize + src_x;
+                let top_idx = (src_y_top * self.cam_w as usize + src_x) * 3; // RGB bytes
+                let bot_idx = (src_y_bot * self.cam_w as usize + src_x) * 3; // RGB bytes
                 
-                if top_idx < pixels.len() && bot_idx < pixels.len() {
-                    let (r1, g1, b1) = pixels[top_idx];
-                    let (r2, g2, b2) = pixels[bot_idx];
+                if top_idx + 2 < frame_bytes.len() && bot_idx + 2 < frame_bytes.len() {
+                    let r1 = frame_bytes[top_idx];
+                    let g1 = frame_bytes[top_idx + 1];
+                    let b1 = frame_bytes[top_idx + 2];
+                    
+                    let r2 = frame_bytes[bot_idx];
+                    let g2 = frame_bytes[bot_idx + 1];
+                    let b2 = frame_bytes[bot_idx + 2];
                     
                     if (r1, g1, b1) != last_top || (r2, g2, b2) != last_bot {
                         self.buf.push_str(&format!("\x1B[38;2;{};{};{}m\x1B[48;2;{};{};{}m", r1, g1, b1, r2, g2, b2));
