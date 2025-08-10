@@ -1,4 +1,13 @@
-# P2P video chat
+
+> 📖 🇪🇸 También disponible en español: [README.es.md](README.es.md)
+
+![p2p-video-chat](/p2p-video-chat.png)
+
+![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![Iroh](https://img.shields.io/badge/Iroh-6A1B9A?logo=data:https://www.iroh.computer/)
+![CLI](https://img.shields.io/badge/CLI-222222?logo=gnubash&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-brown)
+
 
 this is a CLI application for peer-to-peer video chat using the Iroh crate and the gossip protocol.
 
@@ -26,3 +35,7 @@ this is a CLI application for peer-to-peer video chat using the Iroh crate and t
 - The connection is peer-to-peer (direct between you and your friend)
 - No data goes through external servers once connected
 - close the terminal or press Ctrl+C to exit
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file.
