@@ -15,13 +15,20 @@ this is a CLI application for peer-to-peer video chat using the Iroh crate and t
 
 ### Download the Binary
 1. Go to the [latest release](../../releases/latest)
-2. Download the binary file (p2p-video-chat)
+2. Download the binary files (p2p-video-chat and p2p-video-chat.exe)
 
 ### Connecting with Someone
 
+#### On macOS/Linux:
 1. **Person A** runs: `./p2p-video-chat open`
 2. **Person A** shares the room code that appears
 3. **Person B** runs: `./p2p-video-chat join <room-code>`
+4. You're connected!
+
+#### On Windows:
+1. **Person A** runs: `./p2p-video-chat.exe open`
+2. **Person A** shares the room code that appears
+3. **Person B** runs: `./p2p-video-chat.exe join <room-code>`
 4. You're connected!
 
 ## Requirements
