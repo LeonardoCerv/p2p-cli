@@ -41,7 +41,7 @@ enum MessageBody {
     AboutMe { from: NodeId },
     VideoFrame { 
         from: NodeId, 
-        frame_data: Vec<u8>, // Changed to raw bytes for better compression
+        frame_data: Vec<u8>,
         width: u32,
         height: u32,
     },
@@ -170,12 +170,49 @@ impl FromStr for Ticket {
     }
 }
 
+fn frames_differ(frame1: &[u8], frame2: &[u8], threshold_percent: u8) -> bool {
+    if frame1.len() != frame2.len() || frame1.is_empty() {
+        return true;
+    }
+    
+    let mut different_pixels = 0;
+    let total_pixels = frame1.len() / 3;
+    
+    let step = if total_pixels < 100 { 3 } else { 12 };
+    
+    let mut sampled_pixels = 0;
+    
+    for i in (0..frame1.len()).step_by(step) {
+        if i + 2 < frame1.len() && i + 2 < frame2.len() {
+            sampled_pixels += 1;
+            
+            let r_diff = frame1[i].abs_diff(frame2[i]);
+            let g_diff = frame1[i + 1].abs_diff(frame2[i + 1]);
+            let b_diff = frame1[i + 2].abs_diff(frame2[i + 2]);
+            
+            if r_diff > 20 || g_diff > 20 || b_diff > 20 {
+                different_pixels += 1;
+            }
+        }
+    }
+    
+    let change_percent = if sampled_pixels > 0 {
+        (different_pixels * 100) / sampled_pixels
+    } else {
+        100
+    };
+    
+    change_percent > threshold_percent as usize
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-    let gossip = Gossip::builder().spawn(endpoint.clone());
+    let gossip = Gossip::builder()
+        .max_message_size(10 * 1024 * 1024) 
+        .spawn(endpoint.clone());
     let _router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(GOSSIP_ALPN, gossip.clone())
         .spawn();
@@ -232,14 +269,12 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Initialize display for received frames
     let mut display: Option<TerminalDisplay> = None;
 
     sender.broadcast(Message::new(MessageBody::AboutMe {
         from: endpoint.node_id(),
     }).to_vec().into()).await?;
 
-    // Create a channel for receiving video frames to display
     let (frame_tx, mut frame_rx) = tokio::sync::mpsc::unbounded_channel::<(Vec<u8>, u32, u32)>();
     
     let sender_clone = sender.clone();
@@ -258,23 +293,21 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Video streaming and display loop
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(500)); // Slower for debugging - 2 FPS
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(67));
+    let mut last_frame: Option<Vec<u8>> = None;
     
     // Create error frame for when camera is not available
     let create_error_frame = || {
-        let width = 20u32;  // Even smaller for testing
-        let height = 15u32;
+        let width = 640u32;
+        let height = 480u32;
         let mut frame_data = Vec::with_capacity((width * height * 3) as usize);
         
-        // Create a distinctive error pattern - store as RGB bytes
         for y in 0..height {
             for x in 0..width {
-                // Simple pattern
                 if (x + y) % 2 == 0 {
-                    frame_data.extend_from_slice(&[255, 0, 0]); // Red
+                    frame_data.extend_from_slice(&[255, 0, 0]);
                 } else {
-                    frame_data.extend_from_slice(&[128, 0, 0]); // Dark red
+                    frame_data.extend_from_slice(&[128, 0, 0]);
                 }
             }
         }
@@ -282,26 +315,22 @@ async fn main() -> Result<()> {
         (frame_data, width, height)
     };
 
-    // Function to reduce frame size by downsampling and convert to bytes
-    let reduce_frame_size = |frame: &[(u8, u8, u8)], orig_w: u32, orig_h: u32, new_w: u32, new_h: u32| -> Vec<u8> {
+    let reduce_frame_size = |frame: &[u8], orig_w: u32, orig_h: u32, new_w: u32, new_h: u32| -> Vec<u8> {
         let mut reduced = Vec::with_capacity((new_w * new_h * 3) as usize);
         
         for y in 0..new_h {
             for x in 0..new_w {
-                // Map new coordinates to original coordinates
                 let orig_x = ((x as f32 / new_w as f32) * orig_w as f32) as u32;
                 let orig_y = ((y as f32 / new_h as f32) * orig_h as f32) as u32;
                 
-                // Clamp to bounds
                 let orig_x = orig_x.min(orig_w - 1);
                 let orig_y = orig_y.min(orig_h - 1);
                 
-                let idx = (orig_y * orig_w + orig_x) as usize;
-                if idx < frame.len() {
-                    let (r, g, b) = frame[idx];
-                    reduced.extend_from_slice(&[r, g, b]);
+                let idx = ((orig_y * orig_w + orig_x) * 3) as usize;
+                if idx + 2 < frame.len() {
+                    reduced.extend_from_slice(&[frame[idx], frame[idx + 1], frame[idx + 2]]);
                 } else {
-                    reduced.extend_from_slice(&[0, 0, 0]); // Black pixel if out of bounds
+                    reduced.extend_from_slice(&[0, 0, 0]);
                 }
             }
         }
@@ -309,35 +338,43 @@ async fn main() -> Result<()> {
         reduced
     };
 
-    // Main loop combining video streaming and display
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                // Send video frame
                 if let Some(ref mut cam) = camera {
                     let (width, height) = cam.dimensions();
                     match cam.get_frame() {
                         Ok(frame) => {
-                            // Dramatically reduce frame size for network transmission
-                            let frame_data = frame.to_vec();
-                            let reduced_frame = reduce_frame_size(&frame_data, width, height, 20, 15);
+                            let reduced_frame = reduce_frame_size(frame, width, height, 640, 480);
+
+                            let should_send = if let Some(ref last) = last_frame {
+                                frames_differ(&reduced_frame, last, 2)
+                            } else {
+                                true
+                            };
                             
-                            let message = Message::new(MessageBody::VideoFrame {
-                                from: endpoint.node_id(),
-                                frame_data: reduced_frame,
-                                width: 20,
-                                height: 15,
-                            });
-                            let message_bytes = message.to_vec();
-                            let _ = sender.broadcast(message_bytes.into()).await;
+                            if should_send {
+                                let frame_data = reduced_frame.clone();
+                                
+                                let message = Message::new(MessageBody::VideoFrame {
+                                    from: endpoint.node_id(),
+                                    frame_data,
+                                    width: 640,
+                                    height: 480,
+                                });
+                                let message_bytes = message.to_vec();
+                                let _ = sender.broadcast(message_bytes.into()).await;
+                                
+                                last_frame = Some(reduced_frame);
+                            }
                         },
                         Err(e) => {
                             eprintln!("Error capturing frame: {}", e);
-                            // Send error frame when camera fails
                             let (error_frame, error_width, error_height) = create_error_frame();
+                            let frame_data = error_frame.clone(); 
                             let message = Message::new(MessageBody::VideoFrame {
                                 from: endpoint.node_id(),
-                                frame_data: error_frame,
+                                frame_data,
                                 width: error_width,
                                 height: error_height,
                             });
@@ -346,11 +383,11 @@ async fn main() -> Result<()> {
                         }
                     }
                 } else {
-                    // Send error frame when no camera
                     let (error_frame, error_width, error_height) = create_error_frame();
+                    let frame_data = error_frame.clone();
                     let message = Message::new(MessageBody::VideoFrame {
                         from: endpoint.node_id(),
-                        frame_data: error_frame,
+                        frame_data,
                         width: error_width,
                         height: error_height,
                     });
@@ -359,15 +396,12 @@ async fn main() -> Result<()> {
                 }
             }
             Some((frame_data, width, height)) = frame_rx.recv() => {
-                // Initialize display if needed
                 if display.is_none() {
                     display = Some(TerminalDisplay::new(width, height));
                     println!("> receiving video from peer...");
-                    // Small delay to ensure terminal is ready
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
                 
-                // Display the frame
                 if let Some(ref mut disp) = display {
                     if let Err(e) = disp.show_frame(&frame_data) {
                         eprintln!("Display error: {}", e);
@@ -433,15 +467,15 @@ async fn subscribe_loop(
                         continue;
                     }
                     
+                    let frame_data_raw = frame_data.clone();
+                    
                     if connected_peers.contains(&from) {
-                        // Send frame to main thread for display
-                        let _ = frame_tx.send((frame_data, width, height));
+                        let _ = frame_tx.send((frame_data_raw, width, height));
                     } else if connected_peers.len() < 1 {
                         connected_peers.insert(from);
                         println!("{} has joined ({}/2 people in room)", from.fmt_short(), connected_peers.len() + 1);
                         
-                        // Send frame to main thread for display
-                        let _ = frame_tx.send((frame_data, width, height));
+                        let _ = frame_tx.send((frame_data_raw, width, height));
                     } else {
                         rejected_peers.insert(from);
                         let _ = sender.broadcast(Message::new(MessageBody::RoomFull {
@@ -471,7 +505,6 @@ async fn subscribe_loop(
         }
     }
 } else {
-    // Non-message events can be ignored silently
 }
 }
     Ok(())

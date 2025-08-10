@@ -7,7 +7,7 @@ use anyhow::Result;
 
 pub struct CameraCapture {
     camera: Camera,
-    buffer: Vec<(u8, u8, u8)>,
+    buffer: Vec<u8>,
 }
 
 impl CameraCapture {
@@ -23,7 +23,7 @@ impl CameraCapture {
         std::thread::sleep(std::time::Duration::from_millis(100));
         
         let res = camera.resolution();
-        let buffer_size = (res.width() * res.height()) as usize;
+        let buffer_size = (res.width() * res.height() * 3) as usize;
         
         Ok(Self { 
             camera,
@@ -31,22 +31,18 @@ impl CameraCapture {
         })
     }
     
-    pub fn get_frame(&mut self) -> Result<&[(u8, u8, u8)]> {
+    pub fn get_frame(&mut self) -> Result<&[u8]> {
         let frame = self.camera.frame()?;
         let img = frame.decode_image::<RgbFormat>()?;
-        let (w, h) = img.dimensions();
+        let raw_data = img.as_raw();
         
-        let expected = (w * h) as usize;
-        if self.buffer.len() != expected {
-            self.buffer.clear();
-            self.buffer.reserve(expected);
-        } else {
-            self.buffer.clear();
+        let expected = raw_data.len();
+        if self.buffer.capacity() < expected {
+            self.buffer.reserve(expected - self.buffer.capacity());
         }
         
-        for chunk in img.as_raw().chunks_exact(3) {
-            self.buffer.push((chunk[0], chunk[1], chunk[2]));
-        }
+        self.buffer.clear();
+        self.buffer.extend_from_slice(raw_data);
         
         Ok(&self.buffer)
     }
