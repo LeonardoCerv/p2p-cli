@@ -1,5 +1,5 @@
 [package]
-name = "p2p-cli"
+name = "p2p-video-chat"
 version = "0.1.0"
 edition = "2021"
 

@@ -82,7 +82,7 @@ impl TicketRegistry {
     fn load_or_create() -> Self {
         let path = dirs::home_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap())
-            .join(".p2p-cli-tickets.json");
+            .join(".p2p-video-chat-tickets.json");
         
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(registry) = serde_json::from_str(&content) {
@@ -96,7 +96,7 @@ impl TicketRegistry {
     fn save(&self) -> Result<()> {
         let path = dirs::home_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap())
-            .join(".p2p-cli-tickets.json");
+            .join(".p2p-video-chat-tickets.json");
         
         fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())
