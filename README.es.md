@@ -15,9 +15,16 @@ Esta es una aplicación CLI para videochat peer-to-peer usando el crate Iroh y e
 
 ### Conectarse con Alguien
 
+#### En macOS/Linux:
 1. **Persona A** ejecuta: `./p2p-video-chat open`
 2. **Persona A** comparte el código de sala que aparece
 3. **Persona B** ejecuta: `./p2p-video-chat join <código-de-sala>`
+4. ¡Ya están conectados!
+
+#### En Windows:
+1. **Persona A** ejecuta: `./p2p-video-chat.exe open`
+2. **Persona A** comparte el código de sala que aparece
+3. **Persona B** ejecuta: `./p2p-video-chat.exe join <código-de-sala>`
 4. ¡Ya están conectados!
 
 ## Requisitos
