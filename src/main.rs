@@ -178,23 +178,33 @@ fn frames_differ(frame1: &[u8], frame2: &[u8], threshold_percent: u8) -> bool {
         return true;
     }
     
-    let mut different_pixels = 0;
     let total_pixels = frame1.len() / 3;
     
-    let step = if total_pixels < 100 { 3 } else { 12 };
+    let step = if total_pixels < 1000 { 
+        3 
+    } else if total_pixels < 10000 { 
+        9 
+    } else { 
+        15 
+    };
     
+    let mut different_pixels = 0;
     let mut sampled_pixels = 0;
     
-    for i in (0..frame1.len()).step_by(step) {
-        if i + 2 < frame1.len() && i + 2 < frame2.len() {
-            sampled_pixels += 1;
+    let max_allowed_diff = (total_pixels * threshold_percent as usize) / (100 * (step / 3));
+    
+    for i in (0..frame1.len() - 2).step_by(step) {
+        sampled_pixels += 1;
+        
+        let pixel_diff = ((frame1[i] as u16).abs_diff(frame2[i] as u16)) +
+                        ((frame1[i + 1] as u16).abs_diff(frame2[i + 1] as u16)) +
+                        ((frame1[i + 2] as u16).abs_diff(frame2[i + 2] as u16));
+        
+        if pixel_diff > 45 {
+            different_pixels += 1;
             
-            let r_diff = frame1[i].abs_diff(frame2[i]);
-            let g_diff = frame1[i + 1].abs_diff(frame2[i + 1]);
-            let b_diff = frame1[i + 2].abs_diff(frame2[i + 2]);
-            
-            if r_diff > 20 || g_diff > 20 || b_diff > 20 {
-                different_pixels += 1;
+            if different_pixels > max_allowed_diff {
+                return true;
             }
         }
     }
@@ -341,21 +351,29 @@ async fn main() -> Result<()> {
         }
     });
 
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(67));
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(33));
     let mut last_frame: Option<Vec<u8>> = None;
     
-    // Create error frame for when camera is not available
     let create_error_frame = || {
         let width = 640u32;
         let height = 480u32;
         let mut frame_data = Vec::with_capacity((width * height * 3) as usize);
         
+        let center_x = width / 2;
+        let center_y = height / 2;
+        
         for y in 0..height {
             for x in 0..width {
-                if (x + y) % 2 == 0 {
-                    frame_data.extend_from_slice(&[255, 0, 0]);
+                let dx = (x as i32 - center_x as i32).abs();
+                let dy = (y as i32 - center_y as i32).abs();
+                let dist = ((dx * dx + dy * dy) as f64).sqrt();
+                
+                if dist < 50.0 {
+                    frame_data.extend_from_slice(&[255, 255, 255]);
+                } else if (x / 40) % 2 == (y / 40) % 2 {
+                    frame_data.extend_from_slice(&[180, 40, 40]);
                 } else {
-                    frame_data.extend_from_slice(&[128, 0, 0]);
+                    frame_data.extend_from_slice(&[120, 20, 20]);
                 }
             }
         }
@@ -386,61 +404,91 @@ async fn main() -> Result<()> {
         reduced
     };
 
+    let mut frame_counter = 0u32;
+    let mut last_frame_time = std::time::Instant::now();
+
     loop {
         tokio::select! {
             _ = interval.tick() => {
                 if let Some(ref mut cam) = camera {
-                    let (width, height) = cam.dimensions();
-                    match cam.get_frame() {
-                        Ok(frame) => {
-                            let reduced_frame = reduce_frame_size(frame, width, height, 640, 480);
-
-                            let should_send = if let Some(ref last) = last_frame {
-                                frames_differ(&reduced_frame, last, 2)
-                            } else {
-                                true
-                            };
-                            
-                            if should_send {
-                                let frame_data = reduced_frame.clone();
+                    frame_counter += 1;
+                    
+                    let should_capture = if cam.is_healthy() {
+                        true
+                    } else {
+                        frame_counter % 2 == 0
+                    };
+                    
+                    if should_capture {
+                        let (width, height) = cam.dimensions();
+                        match cam.get_frame() {
+                            Ok(frame) => {
+                                let now = std::time::Instant::now();
+                                let frame_time = now.duration_since(last_frame_time);
+                                last_frame_time = now;
                                 
+                                if frame.len() >= (width * height * 3) as usize {
+                                    let reduced_frame = reduce_frame_size(frame, width, height, 640, 480);
+
+                                    let should_send = if let Some(ref last) = last_frame {
+                                        frames_differ(&reduced_frame, last, 1)
+                                    } else {
+                                        true
+                                    };
+                                    
+                                    if should_send {
+                                        let frame_data = reduced_frame.clone();
+                                        
+                                        let message = Message::new(MessageBody::VideoFrame {
+                                            from: endpoint.node_id(),
+                                            frame_data,
+                                            width: 640,
+                                            height: 480,
+                                        });
+                                        let message_bytes = message.to_vec();
+                                        let _ = sender.broadcast(message_bytes.into()).await;
+                                        
+                                        last_frame = Some(reduced_frame);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Error capturing frame: {}", e);
+                                let (error_frame, error_width, error_height) = create_error_frame();
+                                let frame_data = error_frame.clone(); 
                                 let message = Message::new(MessageBody::VideoFrame {
                                     from: endpoint.node_id(),
                                     frame_data,
-                                    width: 640,
-                                    height: 480,
+                                    width: error_width,
+                                    height: error_height,
                                 });
                                 let message_bytes = message.to_vec();
                                 let _ = sender.broadcast(message_bytes.into()).await;
-                                
-                                last_frame = Some(reduced_frame);
                             }
-                        },
-                        Err(e) => {
-                            eprintln!("Error capturing frame: {}", e);
-                            let (error_frame, error_width, error_height) = create_error_frame();
-                            let frame_data = error_frame.clone(); 
-                            let message = Message::new(MessageBody::VideoFrame {
-                                from: endpoint.node_id(),
-                                frame_data,
-                                width: error_width,
-                                height: error_height,
-                            });
-                            let message_bytes = message.to_vec();
-                            let _ = sender.broadcast(message_bytes.into()).await;
                         }
                     }
                 } else {
                     let (error_frame, error_width, error_height) = create_error_frame();
                     let frame_data = error_frame.clone();
-                    let message = Message::new(MessageBody::VideoFrame {
-                        from: endpoint.node_id(),
-                        frame_data,
-                        width: error_width,
-                        height: error_height,
-                    });
-                    let message_bytes = message.to_vec();
-                    let _ = sender.broadcast(message_bytes.into()).await;
+                    
+                    let should_send = if let Some(ref last) = last_frame {
+                        frames_differ(&frame_data, last, 5)
+                    } else {
+                        true
+                    };
+                    
+                    if should_send {
+                        let message = Message::new(MessageBody::VideoFrame {
+                            from: endpoint.node_id(),
+                            frame_data: frame_data.clone(),
+                            width: error_width,
+                            height: error_height,
+                        });
+                        let message_bytes = message.to_vec();
+                        let _ = sender.broadcast(message_bytes.into()).await;
+                        
+                        last_frame = Some(frame_data);
+                    }
                 }
             }
             Some((frame_data, width, height)) = frame_rx.recv() => {
@@ -552,9 +600,8 @@ async fn subscribe_loop(
             eprintln!("Failed to decode message: {}", e);
         }
     }
-} else {
-}
-}
+        }
+    }
     Ok(())
 }
 
