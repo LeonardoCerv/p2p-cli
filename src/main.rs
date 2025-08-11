@@ -11,6 +11,9 @@ use iroh_gossip::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED};
+
 mod camera;
 mod display;
 
@@ -256,15 +259,60 @@ async fn main() -> Result<()> {
         .split();
     println!("> connected!");
 
-    // Initialize camera
+    // Initialize camera with Windows COM workaround
+    println!("> initializing camera...");
+    
+    #[cfg(target_os = "windows")]
+    {
+        unsafe {
+            CoUninitialize();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        
+            let hr = CoInitializeEx(
+                None,
+                COINIT_APARTMENTTHREADED
+            );
+            
+            if hr.is_err() && hr.0 != 1 {
+                eprintln!("Warning: Could not set apartment threading, trying multithreaded: {:?}", hr);
+                
+                CoUninitialize();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                
+                let hr2 = CoInitializeEx(
+                    None,
+                    COINIT_MULTITHREADED
+                );
+                
+                if hr2.is_err() && hr2.0 != 1 {
+                    eprintln!("Warning: Could not initialize COM at all: {:?}", hr2);
+                }
+            }
+        }
+    }
+    
     let mut camera = match CameraCapture::new() {
         Ok(cam) => {
-            println!("> camera initialized");
+            println!("> camera initialized successfully");
             Some(cam)
         },
         Err(e) => {
-            println!("> warning: failed to initialize camera: {}", e);
-            println!("> will send error frames and can still receive video from peers");
+            #[cfg(target_os = "windows")]
+            {
+                println!("> warning: failed to initialize camera: {}", e);
+                println!("> this is often caused by Windows Media Foundation issues");
+                println!("> troubleshooting steps:");
+                println!(">   1. ensure no other applications are using the camera");
+                println!(">   2. try running as administrator");
+                println!(">   3. check camera permissions in windows privacy settings");
+                println!(">   4. restart the application");
+                println!("> will send placeholder frames and can still receive video from peers");
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                println!("> warning: failed to initialize camera: {}", e);
+                println!("> will send placeholder frames and can still receive video from peers");
+            }
             None
         }
     };
