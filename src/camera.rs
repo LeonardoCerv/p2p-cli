@@ -56,12 +56,9 @@ impl CameraCapture {
         ];
         
         for (format_idx, format) in formats.iter().enumerate() {
-            println!("Trying high-performance camera format {}: {:?}", format_idx, format);
-            
             for camera_index in [0, 1, 2] {
                 match Self::try_create_camera(camera_index, format.clone()) {
                     Ok(camera_capture) => {
-                        println!("Successfully initialized camera {} with format {} for high-performance capture", camera_index, format_idx);
                         return Ok(camera_capture);
                     }
                     Err(e) => {

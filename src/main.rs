@@ -303,7 +303,6 @@ async fn main() -> Result<()> {
     
     let mut camera = match CameraCapture::new() {
         Ok(cam) => {
-            println!("> camera initialized successfully");
             Some(cam)
         },
         Err(e) => {
@@ -424,7 +423,6 @@ async fn main() -> Result<()> {
                         match cam.get_frame() {
                             Ok(frame) => {
                                 let now = std::time::Instant::now();
-                                let frame_time = now.duration_since(last_frame_time);
                                 last_frame_time = now;
                                 
                                 if frame.len() >= (width * height * 3) as usize {
