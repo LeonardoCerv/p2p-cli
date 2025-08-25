@@ -1,5 +1,6 @@
 use std::io::{self, Write, BufWriter};
 use anyhow::Result;
+use colored::control;
 
 pub struct TerminalDisplay {
     cam_w: u32,
@@ -14,10 +15,17 @@ pub struct TerminalDisplay {
     buf: String,
     writer: BufWriter<std::io::Stdout>,
     redraw: bool,
+    supports_color: bool,
 }
 
 impl TerminalDisplay {
     pub fn new(cam_w: u32, cam_h: u32) -> Self {
+        // Initialize colored crate for Windows support
+        #[cfg(windows)]
+        let _ = control::set_virtual_terminal(true);
+        
+        let supports_color = control::SHOULD_COLORIZE.should_colorize();
+        
         let (term_w, term_h) = term_size();
         
         let max_w = term_w.saturating_sub(2);
@@ -35,7 +43,9 @@ impl TerminalDisplay {
         
         let buf_size = (disp_w * disp_h * 50) + 1000;
         
-        print!("\x1B[?25l");
+        if supports_color {
+            print!("\x1B[?25l");
+        }
         io::stdout().flush().unwrap();
         
         Self {
@@ -51,6 +61,7 @@ impl TerminalDisplay {
             buf: String::with_capacity(buf_size),
             writer: BufWriter::with_capacity(32768, io::stdout()),
             redraw: true,
+            supports_color,
         }
     }
 
@@ -85,9 +96,19 @@ impl TerminalDisplay {
         self.buf.clear();
         
         if self.redraw {
-            self.buf.push_str("\x1B[2J\x1B[H");
+            if self.supports_color {
+                self.buf.push_str("\x1B[2J\x1B[H");
+            } else {
+                for _ in 0..self.term_h {
+                    self.buf.push('\n');
+                }
+                // Move cursor to top
+                for _ in 0..self.term_h {
+                    self.buf.push_str("\x08");
+                }
+            }
             self.redraw = false;
-        } else {
+        } else if self.supports_color {
             self.buf.push_str("\x1B[H");
         }
         
@@ -120,20 +141,36 @@ impl TerminalDisplay {
                     let g2 = frame_bytes[bot_idx + 1];
                     let b2 = frame_bytes[bot_idx + 2];
                     
-                    if (r1, g1, b1) != last_top || (r2, g2, b2) != last_bot {
-                        self.buf.push_str(&format!("\x1B[38;2;{};{};{}m\x1B[48;2;{};{};{}m", r1, g1, b1, r2, g2, b2));
-                        last_top = (r1, g1, b1);
-                        last_bot = (r2, g2, b2);
+                    if self.supports_color {
+                        if (r1, g1, b1) != last_top || (r2, g2, b2) != last_bot {
+                            self.buf.push_str(&format!("\x1B[38;2;{};{};{}m\x1B[48;2;{};{};{}m", r1, g1, b1, r2, g2, b2));
+                            last_top = (r1, g1, b1);
+                            last_bot = (r2, g2, b2);
+                        }
+                        self.buf.push('▀');
+                    } else {
+                        let brightness = ((r1 as u16 + g1 as u16 + b1 as u16) / 3) as u8;
+                        let char = match brightness {
+                            0..=51 => ' ',
+                            52..=102 => '.',
+                            103..=153 => ':',
+                            154..=204 => '#',
+                            _ => '@',
+                        };
+                        self.buf.push(char);
                     }
-                    self.buf.push('▀');
                 } else {
                     self.buf.push(' ');
                 }
             }
             
-            self.buf.push_str("\x1B[0m\n");
-            last_top = (255, 255, 255);
-            last_bot = (255, 255, 255);
+            if self.supports_color {
+                self.buf.push_str("\x1B[0m\n");
+                last_top = (255, 255, 255);
+                last_bot = (255, 255, 255);
+            } else {
+                self.buf.push('\n');
+            }
         }
         
         self.writer.write_all(self.buf.as_bytes())?;
@@ -150,7 +187,9 @@ fn term_size() -> (usize, usize) {
 
 impl Drop for TerminalDisplay {
     fn drop(&mut self) {
-        print!("\x1B[?25h\x1B[0m");
+        if self.supports_color {
+            print!("\x1B[?25h\x1B[0m");
+        }
         let _ = io::stdout().flush();
     }
 }

@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED};
 
+#[cfg(windows)]
+use colored::control;
+
 mod camera;
 mod display;
 
@@ -220,6 +223,10 @@ fn frames_differ(frame1: &[u8], frame2: &[u8], threshold_percent: u8) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize colored crate for Windows support
+    #[cfg(windows)]
+    let _ = control::set_virtual_terminal(true);
+    
     let cli = Cli::parse();
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
@@ -404,7 +411,7 @@ async fn main() -> Result<()> {
     };
 
     let mut frame_counter = 0u32;
-    let mut last_frame_time = std::time::Instant::now();
+    let mut _last_frame_time = std::time::Instant::now();
 
     loop {
         tokio::select! {
@@ -423,7 +430,7 @@ async fn main() -> Result<()> {
                         match cam.get_frame() {
                             Ok(frame) => {
                                 let now = std::time::Instant::now();
-                                last_frame_time = now;
+                                _last_frame_time = now;
                                 
                                 if frame.len() >= (width * height * 3) as usize {
                                     let reduced_frame = reduce_frame_size(frame, width, height, 640, 480);
